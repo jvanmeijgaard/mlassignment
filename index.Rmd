@@ -2,9 +2,7 @@
 title: "Practical ML - Weight Lifting Assignment"
 author: "Jeroen van Meijgaard"
 date: "7/14/2017"
-output: 
-  html_document: 
-    keep_md: yes
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
