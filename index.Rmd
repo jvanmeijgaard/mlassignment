@@ -7,26 +7,144 @@ output:
     keep_md: yes
 ---
 
+## Machine Learning Assignment - Approach
+
+For the purposes of this exercise we were provided with a data set of individuals wearing accelerometers on various places on their body while performing a specific weight lifting exercise. The exercise was monitored by qualified trainers, and was performed correctly or incorrectly in various ways. The outcome variable was categorized in 5 categories (A, B, C, D, or E). The measurement variables are provided for various points in time during each individual repetition, and summary variables are provided for each time window (I am assuming that a time window represents a single repetition that is either done correctly or incorrectly). The measurement variables provide specific data elements from the accelerometers.
+
+Since the test data reflects observations of a single time point during the exercise, no summary data is available for the each exercise. Thus there is no point in using the summary data in the machine learning algorithm as it will not help in predicting the outcomes in the test set (and presumably in other new data provided)
+
+First I will obtain the data from the provided location and store locally. Next, read in the data and then split the training sample into training and validating set (80/20 random split). All the summary data elements are dropped as well as time stamps and time value in both training and validating sets.
+
+I will create two models using different machine learning algorithms: gradient boosting and random forest. As it turns out the results on the validating set show very high accuracy (over 99%) for each algorithm, and a very high cross match between to two algorithms, so no further optimization was conducted, e.g. using stacking, as further gains will likely be minimal. Moreover, each algorithm yields the same predictions on the test set.
+
+Each of the ML algorithms required some tuning to ensure high accuracy, and limit the amount of computing time required. For the random forest algorithm I chose to use tunelength=30 and sample=’random’ which provided high accuracy within a reasonable time. For the gradient boosting algorithm I used a grid search using tuneGrid, and set n.trees up to 500 and an interaction.depth up to 7.
+
+
 ```{r setup, include=FALSE}
+require(knitr)
+library(plyr)
+library(caret)
+library(randomForest)
+library(gbm)
+
 knitr::opts_chunk$set(echo = TRUE)
+opts_knit$set(root.dir = '~/Analytics/coursera')
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Get data and save locally
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Check if previously downloaded; download and unzip the files.
 
-```{r cars}
-summary(cars)
+Read in the files as pml_training and pml_testing.
+
+All numeric data fields in pml_training are then converted to numeric.
+
+```{r getdata}
+
+setwd('~/Analytics/coursera')
+
+#initialize the url and the zip filename
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fname <- "data/pml-training.csv"
+
+## Download and unzip the dataset:
+if (!file.exists("data/pml-training.csv")){ 
+    download.file(url, fname)
+}
+
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+fname <- "data/pml-testing.csv"
+
+## Download and unzip the dataset:
+if (!file.exists("data/pml-training.csv")){ 
+    download.file(url, fname)
+}
+
+pml_training <- read.csv('data/pml-training.csv',colClasses='character')
+
+pml_testing <- read.csv('data/pml-testing.csv')
 ```
 
-## Including Plots
+## Split training sample
 
-You can also embed plots, for example:
+Split training sample into 80% training sample and 20% validation sample
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+Then we need to drop a number of features that would not realistically be available. For example the time window variable perfectly predicts the classe variable (and so would do it for the test sample as well)
+
+Also, the data set contains summary data for each time window. However, form the testing sample it looks like it's assumed that prediction needs to happen based on a single time point. We will drop all summary variables, and retain all variables that are avaialble for each point in time. 
+
+Additionally we will keep the name of the participant (to allow for an individual effect).
+
+
+```{r split}
+
+#split training into train and validation sets (80/20 split)
+set.seed(61253)
+inTrain <- createDataPartition(pml_training$classe, p = 0.80, list = FALSE)
+
+training <- pml_training[inTrain,]
+validating <- pml_training[-inTrain,]
+
+#select only variables with values at every observation (i.e. not the summary variables)
+n<-names(training)
+vars <- c(grep('^gyros',n),grep('^accel',n),grep('^magnet',n),grep('^roll',n),grep('^pitch',n),grep('^yaw',n),grep('^total',n))
+
+#also take the 'classe' variable and 'user_name' which may provide an individual effect component
+training_sub <- data.frame(training[,c('classe','user_name')],lapply(training[,n[vars]],as.numeric))
+
+#create subset from validating accordingly
+validating_sub <- data.frame(validating[,c('classe','user_name')],lapply(validating[,n[vars]],as.numeric))
+
+```
+## Train a model - Gradient Boosting
+
+
+```{r gbm}
+set.seed(11894)
+gbmGrid <-  expand.grid(interaction.depth = c(3, 5, 7), 
+                        n.trees = (1:5)*100, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+
+modelFit_gbm <- train(classe~., method='gbm', data=training_sub,
+                      trControl=trainControl(method='cv', number=5),tuneGrid = gbmGrid)
+
+
+pred_gbm <- predict(modelFit_gbm, newdata=validating_sub)
+
+confusionMatrix(validating$classe,pred_gbm)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Train a model - Random Forest
+
+
+```{r rf}
+set.seed(39785)
+
+modelFit_rf <- train(classe~., method='rf', data=training_sub, tunelength=30,
+                      trControl=trainControl(method='cv', number=5, search = 'random'))
+
+pred_rf <- predict(modelFit_rf, newdata=validating_sub)
+
+confusionMatrix(validating$classe,pred_rf)
+
+```
+
+
+## Compare predictions from two models
+
+```{r compare}
+confusionMatrix(pred_gbm,pred_rf)
+```
+
+
+## Present results for test sample
+
+```{r test}
+#Predict for test set with gbm
+predict(modelFit_gbm, newdata=pml_testing)
+
+#Predict for test set with rf
+predict(modelFit_rf, newdata=pml_testing)
+```
